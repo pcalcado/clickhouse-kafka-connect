@@ -2,12 +2,22 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-COMPOSE_FILE="$ROOT_DIR/benchmark/labs/client-compression/docker-compose.yml"
+COMPOSE_SOURCE_FILE="$ROOT_DIR/benchmark/labs/client-compression/docker-compose.yml"
+COMPOSE_FILE="${TMPDIR:-/tmp}/client-compression-docker-compose.$$.yml"
 ROWS="${ROWS:-100000}"
 PAYLOAD_BYTES="${PAYLOAD_BYTES:-4096}"
 CLIENT_VERSION="${CLIENT_VERSION:-V2}"
 INSERT_FORMAT="${INSERT_FORMAT:-json}"
 REPEATS="${REPEATS:-3}"
+
+if [[ ! -f "$COMPOSE_SOURCE_FILE" ]]; then
+  echo "missing compose file: $COMPOSE_SOURCE_FILE" >&2
+  exit 1
+fi
+
+cp "$COMPOSE_SOURCE_FILE" "$COMPOSE_FILE"
+
+docker compose -f "$COMPOSE_SOURCE_FILE" down -v >/dev/null 2>&1 || true
 
 compose() {
   docker compose -f "$COMPOSE_FILE" "$@"
@@ -59,7 +69,7 @@ run_case() {
 }
 
 compose up -d clickhouse packet-capture
-trap 'compose down -v' EXIT
+trap 'compose down -v >/dev/null 2>&1 || true; rm -f "$COMPOSE_FILE"' EXIT
 wait_for_clickhouse
 
 cd "$ROOT_DIR"

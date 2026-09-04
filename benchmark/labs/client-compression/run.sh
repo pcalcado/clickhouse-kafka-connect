@@ -58,16 +58,6 @@ run_case() {
     "$repeat" "$compression" "$ROWS" "$PAYLOAD_BYTES" "${elapsed_ms:-unknown}" "$wire_bytes"
 }
 
-run_repeats() {
-  local compression="$1"
-  local repeat
-  for repeat in $(seq 1 "$REPEATS"); do
-    echo
-    echo "=== repeat ${repeat}/${REPEATS} clientCompression=${compression} rows=${ROWS} payloadBytes=${PAYLOAD_BYTES} ==="
-    run_case "$compression" "$repeat"
-  done
-}
-
 compose up -d clickhouse packet-capture
 trap 'compose down -v' EXIT
 wait_for_clickhouse
@@ -76,5 +66,11 @@ cd "$ROOT_DIR"
 ./gradlew publishToMavenLocal >/dev/null
 
 echo "client-compression lab: clientVersion=${CLIENT_VERSION} insertFormat=${INSERT_FORMAT} rows=${ROWS} payloadBytes=${PAYLOAD_BYTES} repeats=${REPEATS}"
-run_repeats false
-run_repeats true
+for repeat in $(seq 1 "$REPEATS"); do
+  echo
+  echo "=== repeat ${repeat}/${REPEATS} clientCompression=false rows=${ROWS} payloadBytes=${PAYLOAD_BYTES} ==="
+  run_case false "$repeat"
+  echo
+  echo "=== repeat ${repeat}/${REPEATS} clientCompression=true rows=${ROWS} payloadBytes=${PAYLOAD_BYTES} ==="
+  run_case true "$repeat"
+done

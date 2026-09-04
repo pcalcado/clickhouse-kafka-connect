@@ -8,7 +8,7 @@ Manual lab for comparing ClickHouse wire bytes with `clientCompression=false` vs
 - starts a `netshoot` sidecar sharing the ClickHouse network namespace
 - captures ClickHouse-bound HTTP traffic with `tcpdump`
 - runs `kafka_connector.CompressionLab` against the same external ClickHouse instance
-- repeats each compression mode a configurable number of times
+- runs both compression modes in alternating order for a configurable number of repeats
 - prints Java-side elapsed time and packet-captured wire bytes for each run
 
 This is intentionally a manual lab, not CI coverage.

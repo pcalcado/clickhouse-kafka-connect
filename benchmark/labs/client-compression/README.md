@@ -7,7 +7,8 @@ Manual lab for comparing ClickHouse wire bytes with `clientCompression=false` vs
 - starts ClickHouse with Docker Compose
 - starts a `netshoot` sidecar sharing the ClickHouse network namespace
 - captures ClickHouse-bound HTTP traffic with `tcpdump`
-- runs `kafka_connector.CompressionLab` twice against the same external ClickHouse instance
+- runs `kafka_connector.CompressionLab` against the same external ClickHouse instance
+- repeats each compression mode a configurable number of times
 - prints Java-side elapsed time and packet-captured wire bytes for each run
 
 This is intentionally a manual lab, not CI coverage.
@@ -27,8 +28,17 @@ ROWS=100000 \
 PAYLOAD_BYTES=4096 \
 CLIENT_VERSION=V2 \
 INSERT_FORMAT=json \
+REPEATS=3 \
 benchmark/labs/client-compression/run.sh
 ```
+
+Variables:
+
+- `ROWS`: number of messages / rows inserted per run
+- `PAYLOAD_BYTES`: repeated payload size per row
+- `CLIENT_VERSION`: `V1` or `V2`
+- `INSERT_FORMAT`: `json` or `string`
+- `REPEATS`: number of times to run each compression mode
 
 ## Notes
 

@@ -18,6 +18,13 @@ application {
     mainClass.set("kafka_connector.BenchmarkMain")
 }
 
+tasks.register<JavaExec>("compressionLab") {
+    group = "application"
+    description = "Runs the manual compression lab against a temporary ClickHouse container"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("kafka_connector.CompressionLab")
+}
+
 repositories {
     mavenLocal()
     mavenCentral()

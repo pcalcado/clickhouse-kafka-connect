@@ -6,6 +6,8 @@ COMPOSE_SOURCE_FILE="$ROOT_DIR/benchmark/labs/client-compression/docker-compose.
 COMPOSE_FILE="${TMPDIR:-/tmp}/client-compression-docker-compose.$$.yml"
 ROWS="${ROWS:-100000}"
 PAYLOAD_BYTES="${PAYLOAD_BYTES:-4096}"
+PAYLOAD_MODE="${PAYLOAD_MODE:-repeated}"
+PAYLOAD_SEED="${PAYLOAD_SEED:-528}"
 CLIENT_VERSION="${CLIENT_VERSION:-V2}"
 INSERT_FORMAT="${INSERT_FORMAT:-json}"
 REPEATS="${REPEATS:-3}"
@@ -57,15 +59,15 @@ run_case() {
     CLICKHOUSE_PASSWORD=password \
     CLICKHOUSE_SSL=false \
     "$ROOT_DIR/gradlew" -p "$ROOT_DIR/benchmark" compressionLab \
-      --args="--clientVersion=${CLIENT_VERSION} --insertFormat=${INSERT_FORMAT} --rows=${ROWS} --payloadBytes=${PAYLOAD_BYTES} --clientCompression=${compression}"
+      --args="--clientVersion=${CLIENT_VERSION} --insertFormat=${INSERT_FORMAT} --rows=${ROWS} --payloadBytes=${PAYLOAD_BYTES} --payloadMode=${PAYLOAD_MODE} --payloadSeed=${PAYLOAD_SEED} --clientCompression=${compression}"
   } 2>&1)"
   printf '%s\n' "$output"
   local wire_bytes
   wire_bytes="$(stop_capture_sum_bytes)"
   local elapsed_ms
   elapsed_ms="$(printf '%s\n' "$output" | sed -n 's/^elapsedMs=//p' | tail -n1)"
-  printf 'result repeat=%s clientCompression=%s rows=%s payloadBytes=%s elapsedMs=%s wireBytes=%s\n' \
-    "$repeat" "$compression" "$ROWS" "$PAYLOAD_BYTES" "${elapsed_ms:-unknown}" "$wire_bytes"
+  printf 'result repeat=%s clientCompression=%s rows=%s payloadBytes=%s payloadMode=%s payloadSeed=%s elapsedMs=%s wireBytes=%s\n' \
+    "$repeat" "$compression" "$ROWS" "$PAYLOAD_BYTES" "$PAYLOAD_MODE" "$PAYLOAD_SEED" "${elapsed_ms:-unknown}" "$wire_bytes"
 }
 
 compose up -d clickhouse packet-capture
@@ -75,7 +77,7 @@ wait_for_clickhouse
 cd "$ROOT_DIR"
 ./gradlew publishToMavenLocal >/dev/null
 
-echo "client-compression lab: clientVersion=${CLIENT_VERSION} insertFormat=${INSERT_FORMAT} rows=${ROWS} payloadBytes=${PAYLOAD_BYTES} repeats=${REPEATS}"
+echo "client-compression lab: clientVersion=${CLIENT_VERSION} insertFormat=${INSERT_FORMAT} rows=${ROWS} payloadBytes=${PAYLOAD_BYTES} payloadMode=${PAYLOAD_MODE} payloadSeed=${PAYLOAD_SEED} repeats=${REPEATS}"
 for repeat in $(seq 1 "$REPEATS"); do
   echo
   echo "=== repeat ${repeat}/${REPEATS} clientCompression=false rows=${ROWS} payloadBytes=${PAYLOAD_BYTES} ==="

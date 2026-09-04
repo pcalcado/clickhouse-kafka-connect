@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 
 public class CompressionLab {
@@ -32,11 +33,16 @@ public class CompressionLab {
     private static final int CLICKHOUSE_PORT_DEFAULT = 8123;
     private static final int ROWS_DEFAULT = 100000;
     private static final int PAYLOAD_BYTES_DEFAULT = 1024;
+    private static final String PAYLOAD_MODE_DEFAULT = "repeated";
+    private static final long PAYLOAD_SEED_DEFAULT = 528L;
 
     public static void main(String[] args) throws Exception {
         LabConfig config = LabConfig.fromArgs(args);
         if (!"V2".equals(config.clientVersion) && !"V1".equals(config.clientVersion)) {
             throw new IllegalArgumentException("clientVersion must be V1 or V2");
+        }
+        if (!"repeated".equals(config.payloadMode) && !"seeded".equals(config.payloadMode)) {
+            throw new IllegalArgumentException("payloadMode must be repeated or seeded");
         }
 
         ClickHouseEndpoint externalEndpoint = externalEndpointFromEnv();
@@ -79,22 +85,29 @@ public class CompressionLab {
                     config.rows,
                     databaseName,
                     config.payloadBytes,
-                    config.insertFormat);
+                    config.insertFormat,
+                    config.payloadMode,
+                    config.payloadSeed);
             List<Record> compressedRecords = createRecords(
                     compressedTableName,
                     config.rows,
                     databaseName,
                     config.payloadBytes,
-                    config.insertFormat);
+                    config.insertFormat,
+                    config.payloadMode,
+                    config.payloadSeed);
 
             if (config.clientCompression != null) {
                 String tableName = config.clientCompression ? compressedTableName : uncompressedTableName;
                 List<Record> records = config.clientCompression ? compressedRecords : uncompressedRecords;
                 Measurement measurement = runInsert(config, endpoint, databaseName, tableName, records, config.clientCompression);
+                verifyRowCount(adminClient, databaseName, tableName, config.rows);
                 printSingleSummary(config, endpoint.containerId, measurement);
             } else {
                 Measurement uncompressed = runInsert(config, endpoint, databaseName, uncompressedTableName, uncompressedRecords, false);
+                verifyRowCount(adminClient, databaseName, uncompressedTableName, config.rows);
                 Measurement compressed = runInsert(config, endpoint, databaseName, compressedTableName, compressedRecords, true);
+                verifyRowCount(adminClient, databaseName, compressedTableName, config.rows);
                 printSummary(config, endpoint.containerId, uncompressed, compressed);
             }
         } finally {
@@ -176,6 +189,33 @@ public class CompressionLab {
                 .build();
     }
 
+    private static void verifyRowCount(ClickHouseHelperClient client, String databaseName, String tableName, int expectedRows) {
+        long actualRows = queryCount(client,
+                String.format("SELECT count() AS row_count FROM `%s`.`%s`", databaseName, tableName),
+                databaseName);
+        if (actualRows != expectedRows) {
+            throw new IllegalStateException(String.format(
+                    "Expected %d rows in %s.%s but found %d",
+                    expectedRows,
+                    databaseName,
+                    tableName,
+                    actualRows));
+        }
+    }
+
+    private static long queryCount(ClickHouseHelperClient client, String sql, String databaseForRequest) {
+        QuerySettings settings = new QuerySettings();
+        if (databaseForRequest != null && !databaseForRequest.isBlank()) {
+            settings.setDatabase(databaseForRequest);
+        }
+
+        try (com.clickhouse.client.api.query.Records records = client.getClient().queryRecords(sql, settings).get()) {
+            return records.iterator().next().getLong("row_count");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed SQL: " + sql, e);
+        }
+    }
+
     private static void executeSql(ClickHouseHelperClient client, String sql, String databaseForRequest) {
         QuerySettings settings = new QuerySettings();
         if (databaseForRequest != null && !databaseForRequest.isBlank()) {
@@ -194,24 +234,31 @@ public class CompressionLab {
             int totalRows,
             String database,
             int payloadBytes,
-            String insertFormat) {
+            String insertFormat,
+            String payloadMode,
+            long payloadSeed) {
         switch (insertFormat) {
             case "string":
-                return createStringRecords(topic, totalRows, database, payloadBytes);
+                return createStringRecords(topic, totalRows, database, payloadBytes, payloadMode, payloadSeed);
             case "json":
-                return createJsonRecords(topic, totalRows, database, payloadBytes);
+                return createJsonRecords(topic, totalRows, database, payloadBytes, payloadMode, payloadSeed);
             default:
                 throw new IllegalArgumentException("Unsupported insertFormat for lab: " + insertFormat);
         }
     }
 
-    private static List<Record> createJsonRecords(String topic, int totalRows, String database, int payloadBytes) {
+    private static List<Record> createJsonRecords(
+            String topic,
+            int totalRows,
+            String database,
+            int payloadBytes,
+            String payloadMode,
+            long payloadSeed) {
         List<Record> result = new ArrayList<>(totalRows);
-        String repeatedValue = repeatedValue(payloadBytes);
         for (int n = 0; n < totalRows; n++) {
             Map<String, Object> value = Map.of(
                     "off16", n,
-                    "str", repeatedValue
+                    "str", valueForRow(payloadBytes, payloadMode, payloadSeed, n)
             );
             SinkRecord sinkRecord = new SinkRecord(
                     topic,
@@ -228,11 +275,17 @@ public class CompressionLab {
         return result;
     }
 
-    private static List<Record> createStringRecords(String topic, int totalRows, String database, int payloadBytes) {
+    private static List<Record> createStringRecords(
+            String topic,
+            int totalRows,
+            String database,
+            int payloadBytes,
+            String payloadMode,
+            long payloadSeed) {
         List<Record> result = new ArrayList<>(totalRows);
-        String repeatedValue = repeatedValue(payloadBytes);
         for (int n = 0; n < totalRows; n++) {
-            String jsonEachRowLine = String.format("{\"off16\":%d,\"str\":\"%s\"}%n", n, repeatedValue);
+            String jsonEachRowLine = String.format("{\"off16\":%d,\"str\":\"%s\"}%n",
+                    n, valueForRow(payloadBytes, payloadMode, payloadSeed, n));
             SinkRecord sinkRecord = new SinkRecord(
                     topic,
                     0,
@@ -248,8 +301,26 @@ public class CompressionLab {
         return result;
     }
 
+    private static String valueForRow(int payloadBytes, String payloadMode, long payloadSeed, int rowNumber) {
+        if ("seeded".equals(payloadMode)) {
+            return seededValue(payloadBytes, payloadSeed, rowNumber);
+        }
+        return repeatedValue(payloadBytes);
+    }
+
     private static String repeatedValue(int payloadBytes) {
         return "x".repeat(Math.max(1, payloadBytes));
+    }
+
+    private static String seededValue(int payloadBytes, long payloadSeed, int rowNumber) {
+        int length = Math.max(1, payloadBytes);
+        Random random = new Random(payloadSeed + rowNumber);
+        String alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        StringBuilder value = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            value.append(alphabet.charAt(random.nextInt(alphabet.length())));
+        }
+        return value.toString();
     }
 
     private static ClickHouseEndpoint externalEndpointFromEnv() {
@@ -325,6 +396,8 @@ public class CompressionLab {
         System.out.println("insertFormat=" + config.insertFormat);
         System.out.println("rows=" + config.rows);
         System.out.println("payloadBytes=" + config.payloadBytes);
+        System.out.println("payloadMode=" + config.payloadMode);
+        System.out.println("payloadSeed=" + config.payloadSeed);
         System.out.println("clientCompression=" + measurement.clientCompression);
         System.out.println("elapsedMs=" + measurement.elapsedMs);
         if (measurement.totalNetIoBytes >= 0) {
@@ -344,6 +417,8 @@ public class CompressionLab {
         System.out.println("insertFormat=" + config.insertFormat);
         System.out.println("rows=" + config.rows);
         System.out.println("payloadBytes=" + config.payloadBytes);
+        System.out.println("payloadMode=" + config.payloadMode);
+        System.out.println("payloadSeed=" + config.payloadSeed);
         System.out.println();
         System.out.println("clientCompression=false");
         System.out.println("  elapsedMs=" + uncompressed.elapsedMs);
@@ -367,15 +442,19 @@ public class CompressionLab {
         private final String insertFormat;
         private final int rows;
         private final int payloadBytes;
+        private final String payloadMode;
+        private final long payloadSeed;
         private final Boolean clientCompression;
 
         private LabConfig(String image, String clientVersion, String insertFormat, int rows, int payloadBytes,
-                Boolean clientCompression) {
+                String payloadMode, long payloadSeed, Boolean clientCompression) {
             this.image = image;
             this.clientVersion = clientVersion;
             this.insertFormat = insertFormat;
             this.rows = rows;
             this.payloadBytes = payloadBytes;
+            this.payloadMode = payloadMode;
+            this.payloadSeed = payloadSeed;
             this.clientCompression = clientCompression;
         }
 
@@ -385,6 +464,8 @@ public class CompressionLab {
             String insertFormat = INSERT_FORMAT_DEFAULT;
             int rows = ROWS_DEFAULT;
             int payloadBytes = PAYLOAD_BYTES_DEFAULT;
+            String payloadMode = PAYLOAD_MODE_DEFAULT;
+            long payloadSeed = PAYLOAD_SEED_DEFAULT;
             Boolean clientCompression = null;
 
             for (String arg : args) {
@@ -405,6 +486,12 @@ public class CompressionLab {
                     case "--payloadBytes":
                         payloadBytes = Integer.parseInt(parts[1]);
                         break;
+                    case "--payloadMode":
+                        payloadMode = parts[1];
+                        break;
+                    case "--payloadSeed":
+                        payloadSeed = Long.parseLong(parts[1]);
+                        break;
                     case "--clientCompression":
                         clientCompression = Boolean.parseBoolean(parts[1]);
                         break;
@@ -413,7 +500,8 @@ public class CompressionLab {
                 }
             }
 
-            return new LabConfig(image, clientVersion, insertFormat, rows, payloadBytes, clientCompression);
+            return new LabConfig(image, clientVersion, insertFormat, rows, payloadBytes,
+                    payloadMode, payloadSeed, clientCompression);
         }
     }
 

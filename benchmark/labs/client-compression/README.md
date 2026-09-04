@@ -21,12 +21,18 @@ From the repository root:
 benchmark/labs/client-compression/run.sh
 ```
 
-Optional overrides:
+Quick preflight without ClickHouse:
+
+```bash
+./gradlew -p benchmark compressionEstimate --args="--rows=100000 --payloadBytes=4096 --payloadMode=profile --payloadSeed=528 --insertFormat=json"
+```
+
+Optional lab overrides:
 
 ```bash
 ROWS=100000 \
 PAYLOAD_BYTES=4096 \
-PAYLOAD_MODE=seeded \
+PAYLOAD_MODE=profile \
 PAYLOAD_SEED=528 \
 CLIENT_VERSION=V2 \
 INSERT_FORMAT=json \
@@ -38,7 +44,7 @@ Variables:
 
 - `ROWS`: number of messages / rows inserted per run
 - `PAYLOAD_BYTES`: payload size per row
-- `PAYLOAD_MODE`: `repeated` or `seeded`
+- `PAYLOAD_MODE`: `repeated`, `seeded`, or `profile`
 - `PAYLOAD_SEED`: seed used for deterministic per-row payload generation in `seeded` mode
 - `CLIENT_VERSION`: `V1` or `V2`
 - `INSERT_FORMAT`: `json` or `string`
@@ -48,6 +54,7 @@ Variables:
 
 - `PAYLOAD_MODE=repeated` uses a highly compressible payload (`"x"` repeated `PAYLOAD_BYTES` times).
 - `PAYLOAD_MODE=seeded` generates deterministic per-row payloads from `PAYLOAD_SEED` so runs are repeatable with more entropy.
+- `PAYLOAD_MODE=profile` generates a simple five-column shape: high-cardinality `user_id`, `session_id`, `request_id`, plus lower-cardinality `region` (10 values) and `event_type` (5 values).
 - After each insert, the lab checks `SELECT count()` to verify the expected number of rows landed.
 - Wire bytes are summed from `tcpdump` packet lengths for `tcp dst port 8123`.
 - Because the script runs one compression mode per capture, the packet totals are much more trustworthy than the earlier Docker `NetIO` approximation.

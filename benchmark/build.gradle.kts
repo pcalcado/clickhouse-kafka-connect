@@ -25,6 +25,13 @@ tasks.register<JavaExec>("compressionLab") {
     mainClass.set("kafka_connector.CompressionLab")
 }
 
+tasks.register<JavaExec>("compressionEstimate") {
+    group = "application"
+    description = "Estimates raw versus LZ4-compressed payload size without running ClickHouse"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("kafka_connector.CompressionEstimate")
+}
+
 repositories {
     mavenLocal()
     mavenCentral()

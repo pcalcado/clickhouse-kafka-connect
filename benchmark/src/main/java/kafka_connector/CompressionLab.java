@@ -35,14 +35,24 @@ public class CompressionLab {
     private static final int PAYLOAD_BYTES_DEFAULT = 1024;
     private static final String PAYLOAD_MODE_DEFAULT = "repeated";
     private static final long PAYLOAD_SEED_DEFAULT = 528L;
+    private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final String[] REGIONS = {
+            "us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1",
+            "ap-northeast-1", "sa-east-1", "ca-central-1", "me-central-1", "af-south-1"
+    };
+    private static final String[] EVENT_TYPES = {
+            "login", "purchase", "click", "open", "close"
+    };
 
     public static void main(String[] args) throws Exception {
         LabConfig config = LabConfig.fromArgs(args);
         if (!"V2".equals(config.clientVersion) && !"V1".equals(config.clientVersion)) {
             throw new IllegalArgumentException("clientVersion must be V1 or V2");
         }
-        if (!"repeated".equals(config.payloadMode) && !"seeded".equals(config.payloadMode)) {
-            throw new IllegalArgumentException("payloadMode must be repeated or seeded");
+        if (!"repeated".equals(config.payloadMode)
+                && !"seeded".equals(config.payloadMode)
+                && !"profile".equals(config.payloadMode)) {
+            throw new IllegalArgumentException("payloadMode must be repeated, seeded, or profile");
         }
 
         ClickHouseEndpoint externalEndpoint = externalEndpointFromEnv();
@@ -77,8 +87,8 @@ public class CompressionLab {
         ClickHouseHelperClient adminClient = createClient(endpoint, CLICKHOUSE_DATABASE_DEFAULT, true, false);
         try {
             executeSql(adminClient, String.format("CREATE DATABASE IF NOT EXISTS `%s`", databaseName), null);
-            createTable(adminClient, databaseName, uncompressedTableName);
-            createTable(adminClient, databaseName, compressedTableName);
+            createTable(adminClient, databaseName, uncompressedTableName, config);
+            createTable(adminClient, databaseName, compressedTableName, config);
 
             List<Record> uncompressedRecords = createRecords(
                     uncompressedTableName,
@@ -122,10 +132,30 @@ public class CompressionLab {
         }
     }
 
-    private static void createTable(ClickHouseHelperClient adminClient, String databaseName, String tableName) {
-        executeSql(adminClient, String.format(
-                "CREATE TABLE IF NOT EXISTS `%s`.`%s` (`off16` Int32, `str` String) Engine=MergeTree ORDER BY off16",
-                databaseName, tableName), databaseName);
+    private static void createTable(
+            ClickHouseHelperClient adminClient,
+            String databaseName,
+            String tableName,
+            LabConfig config) {
+        String ddl;
+        if ("profile".equals(config.payloadMode)) {
+            ddl = String.format(
+                    "CREATE TABLE IF NOT EXISTS `%s`.`%s` ("
+                            + "`user_id` Int32, "
+                            + "`session_id` String, "
+                            + "`request_id` String, "
+                            + "`region` String, "
+                            + "`event_type` String"
+                            + ") Engine=MergeTree ORDER BY user_id",
+                    databaseName,
+                    tableName);
+        } else {
+            ddl = String.format(
+                    "CREATE TABLE IF NOT EXISTS `%s`.`%s` (`off16` Int32, `str` String) Engine=MergeTree ORDER BY off16",
+                    databaseName,
+                    tableName);
+        }
+        executeSql(adminClient, ddl, databaseName);
     }
 
     private static Measurement runInsert(
@@ -256,10 +286,12 @@ public class CompressionLab {
             long payloadSeed) {
         List<Record> result = new ArrayList<>(totalRows);
         for (int n = 0; n < totalRows; n++) {
-            Map<String, Object> value = Map.of(
-                    "off16", n,
-                    "str", valueForRow(payloadBytes, payloadMode, payloadSeed, n)
-            );
+            Map<String, Object> value = "profile".equals(payloadMode)
+                    ? profileRecordValue(payloadBytes, payloadSeed, n)
+                    : Map.of(
+                            "off16", n,
+                            "str", valueForRow(payloadBytes, payloadMode, payloadSeed, n)
+                    );
             SinkRecord sinkRecord = new SinkRecord(
                     topic,
                     0,
@@ -284,8 +316,10 @@ public class CompressionLab {
             long payloadSeed) {
         List<Record> result = new ArrayList<>(totalRows);
         for (int n = 0; n < totalRows; n++) {
-            String jsonEachRowLine = String.format("{\"off16\":%d,\"str\":\"%s\"}%n",
-                    n, valueForRow(payloadBytes, payloadMode, payloadSeed, n));
+            String jsonEachRowLine = "profile".equals(payloadMode)
+                    ? profileJsonLine(payloadBytes, payloadSeed, n)
+                    : String.format("{\"off16\":%d,\"str\":\"%s\"}%n",
+                            n, valueForRow(payloadBytes, payloadMode, payloadSeed, n));
             SinkRecord sinkRecord = new SinkRecord(
                     topic,
                     0,
@@ -308,19 +342,52 @@ public class CompressionLab {
         return repeatedValue(payloadBytes);
     }
 
+    private static Map<String, Object> profileRecordValue(int payloadBytes, long payloadSeed, int rowNumber) {
+        int tokenLength = Math.max(8, payloadBytes / 2);
+        int userId = deterministicInt(payloadSeed, rowNumber);
+        return Map.of(
+                "user_id", userId,
+                "session_id", seededToken(tokenLength, payloadSeed + 1_000_000L, rowNumber),
+                "request_id", seededToken(tokenLength, payloadSeed + 2_000_000L, rowNumber),
+                "region", pickFromDomain(REGIONS, payloadSeed, rowNumber),
+                "event_type", pickFromDomain(EVENT_TYPES, payloadSeed * 3, rowNumber)
+        );
+    }
+
+    private static String profileJsonLine(int payloadBytes, long payloadSeed, int rowNumber) {
+        Map<String, Object> value = profileRecordValue(payloadBytes, payloadSeed, rowNumber);
+        return String.format(
+                "{\"user_id\":%d,\"session_id\":\"%s\",\"request_id\":\"%s\",\"region\":\"%s\",\"event_type\":\"%s\"}%n",
+                value.get("user_id"),
+                value.get("session_id"),
+                value.get("request_id"),
+                value.get("region"),
+                value.get("event_type"));
+    }
+
     private static String repeatedValue(int payloadBytes) {
         return "x".repeat(Math.max(1, payloadBytes));
     }
 
     private static String seededValue(int payloadBytes, long payloadSeed, int rowNumber) {
-        int length = Math.max(1, payloadBytes);
+        return seededToken(Math.max(1, payloadBytes), payloadSeed, rowNumber);
+    }
+
+    private static int deterministicInt(long payloadSeed, int rowNumber) {
+        return new Random(payloadSeed + rowNumber).nextInt(Integer.MAX_VALUE);
+    }
+
+    private static String seededToken(int length, long payloadSeed, int rowNumber) {
         Random random = new Random(payloadSeed + rowNumber);
-        String alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         StringBuilder value = new StringBuilder(length);
         for (int i = 0; i < length; i++) {
-            value.append(alphabet.charAt(random.nextInt(alphabet.length())));
+            value.append(ALPHABET.charAt(random.nextInt(ALPHABET.length())));
         }
         return value.toString();
+    }
+
+    private static String pickFromDomain(String[] domain, long payloadSeed, int rowNumber) {
+        return domain[new Random(payloadSeed + rowNumber).nextInt(domain.length)];
     }
 
     private static ClickHouseEndpoint externalEndpointFromEnv() {

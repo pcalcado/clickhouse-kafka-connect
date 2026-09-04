@@ -52,6 +52,12 @@ CLICKHOUSE_SSL=false \
 
 Optional: override default Testcontainers image with `CLICKHOUSE_IMAGE`.
 
+### Manual labs
+
+For ad-hoc validation outside JMH, see:
+
+- `benchmark/labs/client-compression/` — manual Docker Compose + tcpdump lab for comparing wire bytes with `clientCompression=false` vs `true`
+
 ### Options 
 
 `-b <benchmark class>` - run specific benchmark. 

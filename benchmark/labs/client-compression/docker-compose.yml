@@ -1,0 +1,24 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8.18.1
+    ports:
+      - "38123:8123"
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: password
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  packet-capture:
+    image: nicolaka/netshoot:latest
+    network_mode: "service:clickhouse"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    command: ["sleep", "infinity"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy

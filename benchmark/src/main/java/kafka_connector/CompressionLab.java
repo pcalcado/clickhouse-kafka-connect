@@ -39,6 +39,12 @@ public class CompressionLab {
             throw new IllegalArgumentException("clientVersion must be V1 or V2");
         }
 
+        ClickHouseEndpoint externalEndpoint = externalEndpointFromEnv();
+        if (externalEndpoint != null) {
+            runLab(config, externalEndpoint);
+            return;
+        }
+
         try (ClickHouseContainer container = new ClickHouseContainer(config.image)
                 .withPassword(CLICKHOUSE_PASSWORD_DEFAULT)) {
             container.start();
@@ -81,10 +87,16 @@ public class CompressionLab {
                     config.payloadBytes,
                     config.insertFormat);
 
-            Measurement uncompressed = runInsert(config, endpoint, databaseName, uncompressedTableName, uncompressedRecords, false);
-            Measurement compressed = runInsert(config, endpoint, databaseName, compressedTableName, compressedRecords, true);
-
-            printSummary(config, endpoint.containerId, uncompressed, compressed);
+            if (config.clientCompression != null) {
+                String tableName = config.clientCompression ? compressedTableName : uncompressedTableName;
+                List<Record> records = config.clientCompression ? compressedRecords : uncompressedRecords;
+                Measurement measurement = runInsert(config, endpoint, databaseName, tableName, records, config.clientCompression);
+                printSingleSummary(config, endpoint.containerId, measurement);
+            } else {
+                Measurement uncompressed = runInsert(config, endpoint, databaseName, uncompressedTableName, uncompressedRecords, false);
+                Measurement compressed = runInsert(config, endpoint, databaseName, compressedTableName, compressedRecords, true);
+                printSummary(config, endpoint.containerId, uncompressed, compressed);
+            }
         } finally {
             try {
                 executeSql(adminClient, String.format("DROP TABLE IF EXISTS `%s`.`%s`", databaseName, uncompressedTableName), databaseName);
@@ -116,13 +128,14 @@ public class CompressionLab {
                 throw new IllegalStateException("Failed to start ClickHouseWriter");
             }
 
-            long bytesBefore = readContainerNetIoBytes(endpoint.containerId);
+            long bytesBefore = endpoint.containerId != null ? readContainerNetIoBytes(endpoint.containerId) : -1L;
             long startedAt = System.nanoTime();
             writer.doInsert(records, new QueryIdentifier(tableName, "compression-lab-" + clientCompression));
             long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
-            long bytesAfter = readContainerNetIoBytes(endpoint.containerId);
+            long bytesAfter = endpoint.containerId != null ? readContainerNetIoBytes(endpoint.containerId) : -1L;
 
-            return new Measurement(clientCompression, elapsedMs, bytesAfter - bytesBefore);
+            long totalNetIoBytes = bytesBefore >= 0 && bytesAfter >= 0 ? bytesAfter - bytesBefore : -1L;
+            return new Measurement(clientCompression, elapsedMs, totalNetIoBytes);
         } catch (Exception e) {
             throw new RuntimeException("Compression lab insert failed", e);
         } finally {
@@ -239,6 +252,19 @@ public class CompressionLab {
         return "x".repeat(Math.max(1, payloadBytes));
     }
 
+    private static ClickHouseEndpoint externalEndpointFromEnv() {
+        String host = System.getenv("CLICKHOUSE_HOST");
+        if (host == null || host.isBlank()) {
+            return null;
+        }
+
+        int port = Integer.parseInt(System.getenv().getOrDefault("CLICKHOUSE_PORT", String.valueOf(CLICKHOUSE_PORT_DEFAULT)));
+        String username = System.getenv().getOrDefault("CLICKHOUSE_USER", "default");
+        String password = System.getenv().getOrDefault("CLICKHOUSE_PASSWORD", "");
+        boolean ssl = Boolean.parseBoolean(System.getenv().getOrDefault("CLICKHOUSE_SSL", "false"));
+        return new ClickHouseEndpoint(host, port, username, password, ssl, null);
+    }
+
     private static long readContainerNetIoBytes(String containerId) {
         try {
             Process process = new ProcessBuilder(
@@ -292,6 +318,21 @@ public class CompressionLab {
         }
     }
 
+    private static void printSingleSummary(LabConfig config, String containerId, Measurement measurement) {
+        System.out.println("CompressionLab");
+        System.out.println("containerId=" + containerId);
+        System.out.println("clientVersion=" + config.clientVersion);
+        System.out.println("insertFormat=" + config.insertFormat);
+        System.out.println("rows=" + config.rows);
+        System.out.println("payloadBytes=" + config.payloadBytes);
+        System.out.println("clientCompression=" + measurement.clientCompression);
+        System.out.println("elapsedMs=" + measurement.elapsedMs);
+        if (measurement.totalNetIoBytes >= 0) {
+            System.out.println("totalNetIoBytes=" + measurement.totalNetIoBytes);
+            System.out.println("bytesPerRow=" + (measurement.totalNetIoBytes / (double) config.rows));
+        }
+    }
+
     private static void printSummary(
             LabConfig config,
             String containerId,
@@ -313,9 +354,11 @@ public class CompressionLab {
         System.out.println("  elapsedMs=" + compressed.elapsedMs);
         System.out.println("  totalNetIoBytes=" + compressed.totalNetIoBytes);
         System.out.println("  bytesPerRow=" + (compressed.totalNetIoBytes / (double) config.rows));
-        System.out.println();
-        System.out.println("compressedVsUncompressedRatio="
-                + (compressed.totalNetIoBytes / (double) uncompressed.totalNetIoBytes));
+        if (uncompressed.totalNetIoBytes >= 0 && compressed.totalNetIoBytes >= 0) {
+            System.out.println();
+            System.out.println("compressedVsUncompressedRatio="
+                    + (compressed.totalNetIoBytes / (double) uncompressed.totalNetIoBytes));
+        }
     }
 
     private static class LabConfig {
@@ -324,13 +367,16 @@ public class CompressionLab {
         private final String insertFormat;
         private final int rows;
         private final int payloadBytes;
+        private final Boolean clientCompression;
 
-        private LabConfig(String image, String clientVersion, String insertFormat, int rows, int payloadBytes) {
+        private LabConfig(String image, String clientVersion, String insertFormat, int rows, int payloadBytes,
+                Boolean clientCompression) {
             this.image = image;
             this.clientVersion = clientVersion;
             this.insertFormat = insertFormat;
             this.rows = rows;
             this.payloadBytes = payloadBytes;
+            this.clientCompression = clientCompression;
         }
 
         private static LabConfig fromArgs(String[] args) {
@@ -339,6 +385,7 @@ public class CompressionLab {
             String insertFormat = INSERT_FORMAT_DEFAULT;
             int rows = ROWS_DEFAULT;
             int payloadBytes = PAYLOAD_BYTES_DEFAULT;
+            Boolean clientCompression = null;
 
             for (String arg : args) {
                 String[] parts = arg.split("=", 2);
@@ -358,12 +405,15 @@ public class CompressionLab {
                     case "--payloadBytes":
                         payloadBytes = Integer.parseInt(parts[1]);
                         break;
+                    case "--clientCompression":
+                        clientCompression = Boolean.parseBoolean(parts[1]);
+                        break;
                     default:
                         throw new IllegalArgumentException("Unknown argument: " + parts[0]);
                 }
             }
 
-            return new LabConfig(image, clientVersion, insertFormat, rows, payloadBytes);
+            return new LabConfig(image, clientVersion, insertFormat, rows, payloadBytes, clientCompression);
         }
     }
 

@@ -12,6 +12,22 @@ CLIENT_VERSION="${CLIENT_VERSION:-V2}"
 INSERT_FORMAT="${INSERT_FORMAT:-json}"
 REPEATS="${REPEATS:-3}"
 
+for arg in "$@"; do
+  case "$arg" in
+    --rows=*) ROWS="${arg#*=}" ;;
+    --payloadBytes=*) PAYLOAD_BYTES="${arg#*=}" ;;
+    --payloadMode=*) PAYLOAD_MODE="${arg#*=}" ;;
+    --payloadSeed=*) PAYLOAD_SEED="${arg#*=}" ;;
+    --clientVersion=*) CLIENT_VERSION="${arg#*=}" ;;
+    --insertFormat=*) INSERT_FORMAT="${arg#*=}" ;;
+    --repeats=*) REPEATS="${arg#*=}" ;;
+    *)
+      echo "unknown argument: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
+
 if [[ ! -f "$COMPOSE_SOURCE_FILE" ]]; then
   echo "missing compose file: $COMPOSE_SOURCE_FILE" >&2
   exit 1

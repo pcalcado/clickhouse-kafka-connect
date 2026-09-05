@@ -21,13 +21,19 @@ From the repository root:
 benchmark/labs/client-compression/run.sh
 ```
 
+With arguments:
+
+```bash
+benchmark/labs/client-compression/run.sh --repeats=2 --rows=1000 --payloadBytes=256 --payloadMode=profile --payloadSeed=528 --clientVersion=V2 --insertFormat=json
+```
+
 Quick preflight without ClickHouse:
 
 ```bash
 ./gradlew -p benchmark compressionEstimate --args="--rows=100000 --payloadBytes=4096 --payloadMode=profile --payloadSeed=528 --insertFormat=json"
 ```
 
-Optional lab overrides:
+Optional lab overrides can also use environment variables:
 
 ```bash
 ROWS=100000 \
@@ -40,7 +46,7 @@ REPEATS=3 \
 benchmark/labs/client-compression/run.sh
 ```
 
-Variables:
+Variables / arguments:
 
 - `ROWS`: number of messages / rows inserted per run
 - `PAYLOAD_BYTES`: payload size per row

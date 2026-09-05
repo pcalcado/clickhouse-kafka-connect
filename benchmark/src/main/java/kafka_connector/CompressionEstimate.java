@@ -1,6 +1,7 @@
 package kafka_connector;
 
-import net.jpountz.lz4.LZ4FrameOutputStream;
+import com.clickhouse.client.api.internal.ClickHouseLZ4OutputStream;
+import net.jpountz.lz4.LZ4Factory;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -36,15 +37,15 @@ public class CompressionEstimate {
         byte[] raw = buildPayload(config).getBytes(StandardCharsets.UTF_8);
         byte[] compressed = compress(raw);
 
-        System.out.println("CompressionEstimate");
-        System.out.println("insertFormat=" + config.insertFormat);
-        System.out.println("rows=" + config.rows);
-        System.out.println("payloadBytes=" + config.payloadBytes);
-        System.out.println("payloadMode=" + config.payloadMode);
-        System.out.println("payloadSeed=" + config.payloadSeed);
-        System.out.println("rawBytes=" + raw.length);
-        System.out.println("lz4Bytes=" + compressed.length);
-        System.out.println("lz4Ratio=" + (compressed.length / (double) raw.length));
+        System.out.println("CompressionEstimate method=clickhouse-native-lz4-in-memory");
+        System.out.println("estimatedInsertFormat=" + config.insertFormat);
+        System.out.println("estimatedRows=" + config.rows);
+        System.out.println("estimatedPayloadBytes=" + config.payloadBytes);
+        System.out.println("estimatedPayloadMode=" + config.payloadMode);
+        System.out.println("estimatedPayloadSeed=" + config.payloadSeed);
+        System.out.println("estimatedRawBytes=" + raw.length);
+        System.out.println("estimatedClickHouseLz4Bytes=" + compressed.length);
+        System.out.println("estimatedClickHouseLz4Ratio=" + (compressed.length / (double) raw.length));
     }
 
     private static String buildPayload(EstimateConfig config) {
@@ -62,7 +63,10 @@ public class CompressionEstimate {
 
     private static byte[] compress(byte[] raw) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try (LZ4FrameOutputStream stream = new LZ4FrameOutputStream(output)) {
+        try (ClickHouseLZ4OutputStream stream = new ClickHouseLZ4OutputStream(
+                output,
+                LZ4Factory.fastestInstance().fastCompressor(),
+                ClickHouseLZ4OutputStream.UNCOMPRESSED_BUFF_SIZE)) {
             stream.write(raw);
         }
         return output.toByteArray();

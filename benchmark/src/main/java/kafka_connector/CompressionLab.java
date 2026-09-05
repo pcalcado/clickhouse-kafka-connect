@@ -46,8 +46,8 @@ public class CompressionLab {
 
     public static void main(String[] args) throws Exception {
         LabConfig config = LabConfig.fromArgs(args);
-        if (!"V2".equals(config.clientVersion) && !"V1".equals(config.clientVersion)) {
-            throw new IllegalArgumentException("clientVersion must be V1 or V2");
+        if (!"V2".equals(config.clientVersion)) {
+            throw new IllegalArgumentException("clientVersion must be V2 because clientCompression=true is V2-only");
         }
         if (!"repeated".equals(config.payloadMode)
                 && !"seeded".equals(config.payloadMode)
@@ -90,32 +90,39 @@ public class CompressionLab {
             createTable(adminClient, databaseName, uncompressedTableName, config);
             createTable(adminClient, databaseName, compressedTableName, config);
 
-            List<Record> uncompressedRecords = createRecords(
-                    uncompressedTableName,
-                    config.rows,
-                    databaseName,
-                    config.payloadBytes,
-                    config.insertFormat,
-                    config.payloadMode,
-                    config.payloadSeed);
-            List<Record> compressedRecords = createRecords(
-                    compressedTableName,
-                    config.rows,
-                    databaseName,
-                    config.payloadBytes,
-                    config.insertFormat,
-                    config.payloadMode,
-                    config.payloadSeed);
-
             if (config.clientCompression != null) {
                 String tableName = config.clientCompression ? compressedTableName : uncompressedTableName;
-                List<Record> records = config.clientCompression ? compressedRecords : uncompressedRecords;
+                List<Record> records = createRecords(
+                        tableName,
+                        config.rows,
+                        databaseName,
+                        config.payloadBytes,
+                        config.insertFormat,
+                        config.payloadMode,
+                        config.payloadSeed);
                 Measurement measurement = runInsert(config, endpoint, databaseName, tableName, records, config.clientCompression);
                 verifyRowCount(adminClient, databaseName, tableName, config.rows);
                 printSingleSummary(config, endpoint.containerId, measurement);
             } else {
+                List<Record> uncompressedRecords = createRecords(
+                        uncompressedTableName,
+                        config.rows,
+                        databaseName,
+                        config.payloadBytes,
+                        config.insertFormat,
+                        config.payloadMode,
+                        config.payloadSeed);
                 Measurement uncompressed = runInsert(config, endpoint, databaseName, uncompressedTableName, uncompressedRecords, false);
                 verifyRowCount(adminClient, databaseName, uncompressedTableName, config.rows);
+
+                List<Record> compressedRecords = createRecords(
+                        compressedTableName,
+                        config.rows,
+                        databaseName,
+                        config.payloadBytes,
+                        config.insertFormat,
+                        config.payloadMode,
+                        config.payloadSeed);
                 Measurement compressed = runInsert(config, endpoint, databaseName, compressedTableName, compressedRecords, true);
                 verifyRowCount(adminClient, databaseName, compressedTableName, config.rows);
                 printSummary(config, endpoint.containerId, uncompressed, compressed);

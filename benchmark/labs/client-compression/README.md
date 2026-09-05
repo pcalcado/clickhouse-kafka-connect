@@ -27,7 +27,7 @@ With arguments:
 benchmark/labs/client-compression/run.sh --repeats=2 --rows=1000 --payloadBytes=256 --payloadMode=profile --payloadSeed=528 --clientVersion=V2 --insertFormat=json
 ```
 
-Quick preflight without ClickHouse:
+Quick in-memory preflight without ClickHouse. This uses the same ClickHouse native LZ4 stream framing as the V2 client and prints `estimated...` field names so it is not confused with packet-captured lab output:
 
 ```bash
 ./gradlew -p benchmark compressionEstimate --args="--rows=100000 --payloadBytes=4096 --payloadMode=profile --payloadSeed=528 --insertFormat=json"
@@ -52,7 +52,7 @@ Variables / arguments:
 - `PAYLOAD_BYTES`: payload size per row
 - `PAYLOAD_MODE`: `repeated`, `seeded`, or `profile`
 - `PAYLOAD_SEED`: seed used for deterministic per-row payload generation in `seeded` mode
-- `CLIENT_VERSION`: `V1` or `V2`
+- `CLIENT_VERSION` / `--clientVersion`: must be `V2`; this lab compares `clientCompression=false` and `true`, and `clientCompression=true` is V2-only
 - `INSERT_FORMAT`: `json` or `string`
 - `REPEATS`: number of times to run each compression mode
 
@@ -63,5 +63,6 @@ Variables / arguments:
 - `PAYLOAD_MODE=profile` generates a simple five-column shape: high-cardinality `user_id`, `session_id`, `request_id`, plus lower-cardinality `region` (10 values) and `event_type` (5 values).
 - After each insert, the lab checks `SELECT count()` to verify the expected number of rows landed.
 - Wire bytes are summed from `tcpdump` packet lengths for `tcp dst port 8123`.
-- Because the script runs one compression mode per capture, the packet totals are much more trustworthy than the earlier Docker `NetIO` approximation.
+- Because the script runs one compression mode per capture, the packet totals are much more trustworthy than the Docker `NetIO` approximation printed only by the bare `compressionLab` Java entry point.
+- The script publishes the current checkout to a temporary Maven local repository and points benchmark Gradle invocations at that directory, so it does not overwrite the release coordinate in `~/.m2`.
 - If you want artifacts, you can copy `/tmp/bench.pcap` from the `packet-capture` container before the script exits.

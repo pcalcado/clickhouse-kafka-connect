@@ -13,7 +13,7 @@ services:
       retries: 60
 
   packet-capture:
-    image: nicolaka/netshoot:latest
+    image: nicolaka/netshoot:v0.13
     network_mode: "service:clickhouse"
     cap_add:
       - NET_ADMIN

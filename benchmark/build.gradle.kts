@@ -23,6 +23,7 @@ tasks.register<JavaExec>("compressionLab") {
     description = "Runs the manual compression lab against a temporary ClickHouse container"
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("kafka_connector.CompressionLab")
+    maxHeapSize = "4g"
 }
 
 tasks.register<JavaExec>("compressionEstimate") {
@@ -56,6 +57,7 @@ dependencies {
     // Used directly by the benchmarks themselves, versioned from the connector's catalog.
     implementation(libs.testcontainers)
     implementation(libs.testcontainers.clickhouse)
+    implementation("org.lz4:lz4-java:1.8.0")
 
     implementation("commons-cli:commons-cli:1.5.0")
     implementation("org.openjdk.jmh:jmh-core:1.37")
